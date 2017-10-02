@@ -1,17 +1,16 @@
 #ifndef QGSAUTHSAML2METHOD_H
 #define QGSAUTHSAML2METHOD_H
 
-#include "qgsauthsamlmethod_global.h"
 #include "qgsauthconfig.h"
 #include "qgsauthmethod.h"
 
-class QGSAUTHSAMLMETHODSHARED_EXPORT QgsAuthSAML2Method : public QgsAuthMethod
+class QgsAuthSAML2Method : public QgsAuthMethod
 {
     Q_OBJECT
 
 public:
     explicit QgsAuthSAML2Method();
-
+    ~QgsAuthSAML2Method();
     // QgsAuthMethod interface
     QString key() const override;
 
