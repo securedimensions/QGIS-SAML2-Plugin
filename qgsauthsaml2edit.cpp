@@ -1,12 +1,21 @@
+#include <QStandardItemModel>
+#include <QUrl>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QXmlStreamReader>
+#include <QMessageBox>
+
 #include "qgsauthsaml2edit.h"
 #include "ui_qgsauthsaml2edit.h"
-
+#include "qgslogger.h"
 
 QgsAuthSAML2Edit::QgsAuthSAML2Edit( QWidget *parent )
-    : QgsAuthMethodEdit( parent )
-    , mValid( 0 )
+  : QgsAuthMethodEdit( parent )
+  , mValid( 0 )
 {
   setupUi( this );
+  setupConnections();
 }
 
 QgsAuthSAML2Edit::~QgsAuthSAML2Edit()
@@ -15,7 +24,8 @@ QgsAuthSAML2Edit::~QgsAuthSAML2Edit()
 
 bool QgsAuthSAML2Edit::validateConfig()
 {
-  bool curvalid = !leUsername->text().isEmpty();
+  bool curvalid = !leUsername->text().isEmpty() && !lePassword->text().isEmpty()
+    && !leFedUrl->text().isEmpty() && cbProviders->currentIndex() != -1; //JSV todo check combobox index
   if ( mValid != curvalid )
   {
     mValid = curvalid;
@@ -29,6 +39,8 @@ QgsStringMap QgsAuthSAML2Edit::configMap() const
   QgsStringMap config;
   config.insert( "username", leUsername->text() );
   config.insert( "password", lePassword->text() );
+  config.insert( "federationurl", leFedUrl->text() );
+  config.insert( "providerurl", cbProviders->currentText() );
 
   return config;
 }
@@ -40,6 +52,9 @@ void QgsAuthSAML2Edit::loadConfig( const QgsStringMap &configmap )
   mConfigMap = configmap;
   leUsername->setText( configmap.value( "username" ) );
   lePassword->setText( configmap.value( "password" ) );
+  leFedUrl->setText( configmap.value( "federationurl" ) );
+  cbProviders->clear();
+  cbProviders->addItem( configmap.value( "providerurl" ) );
 
   validateConfig();
 }
@@ -53,8 +68,10 @@ void QgsAuthSAML2Edit::clearConfig()
 {
   leUsername->clear();
   lePassword->clear();
-  leRealm->clear();
   chkPasswordShow->setChecked( false );
+  leFedUrl->clear();
+  cbProviders->clear();
+  //btnGetProviders->setEnabled(false);
 }
 
 void QgsAuthSAML2Edit::on_leUsername_textChanged( const QString &txt )
@@ -66,4 +83,122 @@ void QgsAuthSAML2Edit::on_leUsername_textChanged( const QString &txt )
 void QgsAuthSAML2Edit::on_chkPasswordShow_stateChanged( int state )
 {
   lePassword->setEchoMode(( state > 0 ) ? QLineEdit::Normal : QLineEdit::Password );
+}
+
+void QgsAuthSAML2Edit::setupConnections()
+{
+  connect( leFedUrl, SIGNAL( textChanged( const QString& ) ), 
+    this, SLOT( onFedUrlChanged( const QString& ) ) );
+  connect( btnGetProviders, SIGNAL ( clicked() ), 
+    this, SLOT( loadFederationMetadata() ) );
+}
+
+void QgsAuthSAML2Edit::onFedUrlChanged( const QString& url )
+{
+  QUrl fedUrl(url);
+
+  btnGetProviders->setEnabled( fedUrl.isValid() );
+
+}
+
+void QgsAuthSAML2Edit::loadFederationMetadata()
+{
+  // clear the list lof loaded IdPs
+  cbProviders->clear();
+
+  // load the federation metadata
+  QNetworkAccessManager *manager = new QNetworkAccessManager( this );
+  QNetworkReply* reply = manager->get( QNetworkRequest( QUrl(leFedUrl->text()) ) );
+  // signal to parse the federation metadata upon load finished
+  connect(reply, SIGNAL(finished()), this, SLOT(parseFederationMetadata()));
+}
+
+void QgsAuthSAML2Edit::parseFederationMetadata()
+{  
+  /* QXmlStreamReader takes any QIODevice. */
+  QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+  QXmlStreamReader xml(reply);
+
+  QString entityID = QString();
+  bool entityIsIdP = false;
+  QString orgName = QString();
+  QString ecpURL = QString();
+
+  /* We'll parse the XML until we reach end of it.*/
+  while(!xml.atEnd() &&
+    !xml.hasError()) {
+      /* Read next element.*/
+      QXmlStreamReader::TokenType token = xml.readNext();
+      /* If token is just StartDocument, we'll go to next.*/
+      if(token == QXmlStreamReader::StartDocument) {
+        continue;
+      }
+      /* If token is StartElement, we'll see if we can read it.*/
+      if(token == QXmlStreamReader::StartElement) {
+        if(xml.name() == "EntitiesDescriptor") {
+          continue;
+        }
+        if(xml.name() == "EntityDescriptor")
+        {
+          entityIsIdP = false;
+          entityID = QString();
+          orgName = QString();
+          ecpURL = QString();
+
+          QXmlStreamAttributes attrs = xml.attributes();
+          entityID = QString(attrs.value("entityID").toString().constData());
+          continue;
+        }
+        else if(xml.name() == "IDPSSODescriptor")
+        {
+          entityIsIdP = true;
+          continue;
+        }
+        else if(xml.name() == "SingleSignOnService")
+        {
+          QXmlStreamAttributes attrs = xml.attributes();
+          if (entityIsIdP && attrs.value("Binding") == QString("urn:oasis:names:tc:SAML:2.0:bindings:SOAP"))
+          {
+            ecpURL = QString(attrs.value("Location").toString().constData());
+          }
+          continue;
+        }
+        else if(xml.name() == "OrganizationName")
+        {
+          if (entityIsIdP)
+            orgName = QString(xml.readElementText().constData());
+
+          continue;
+        }
+
+      }
+      if(token == QXmlStreamReader::EndElement) {
+        if(xml.name() == "EntityDescriptor")
+        {
+          if(entityIsIdP && !ecpURL.isEmpty())
+          {
+            if (orgName.isEmpty())
+              orgName = entityID;
+
+            cbProviders->addItem(orgName,QVariant(ecpURL));
+
+            QgsDebugMsg(QString("IdP entityID: %1").arg(entityID.toStdString().c_str()));
+            QgsDebugMsg(QString("ECPURL: %1\n").arg( ecpURL.toStdString().c_str()));
+            QgsDebugMsg(QString("OrgName: %1\n").arg( orgName.toStdString().c_str()));
+          }
+          continue;
+        }
+      }
+
+  }
+  /* Error handling. */
+  if(xml.hasError()) {
+    QMessageBox::critical(this, 
+      "error loading Federation Metadata", 
+      xml.errorString(), 
+      QMessageBox::Ok);
+  }
+  xml.clear();
+  cbProviders->showPopup();
+  reply->deleteLater();
 }

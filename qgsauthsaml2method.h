@@ -6,35 +6,49 @@
 
 class QgsAuthSAML2Method : public QgsAuthMethod
 {
-    Q_OBJECT
+  Q_OBJECT
 
 public:
-    explicit QgsAuthSAML2Method();
-    ~QgsAuthSAML2Method();
-    // QgsAuthMethod interface
-    QString key() const override;
+  explicit QgsAuthSAML2Method();
+  ~QgsAuthSAML2Method();
+  // QgsAuthMethod interface
+  QString key() const override;
 
-    QString description() const override;
+  QString description() const override;
 
-    QString displayDescription() const override;
+  QString displayDescription() const override;
 
-    bool updateNetworkRequest( QNetworkRequest &request, const QString &authcfg,
-                               const QString &dataprovider = QString() ) override;
+  bool updateNetworkRequest( QNetworkRequest &request, const QString &authcfg,
+    const QString &dataprovider = QString() ) override;
 
-    bool updateDataSourceUriItems( QStringList &connectionItems, const QString &authcfg,
-                                   const QString &dataprovider = QString() ) override;
+  bool updateNetworkReply( QNetworkReply *reply, const QString &authcfg,
+    const QString &dataprovider ) override;
 
-    void clearCachedConfig( const QString &authcfg ) override;
+  bool updateDataSourceUriItems( QStringList &connectionItems, const QString &authcfg,
+    const QString &dataprovider = QString() ) override;
 
-    void updateMethodConfig( QgsAuthMethodConfig &mconfig ) override;
+  void clearCachedConfig( const QString &authcfg ) override;
+
+  void updateMethodConfig( QgsAuthMethodConfig &mconfig ) override;
+
+private slots:
+  void spReplyFinished();
+  void idpReplyFinished();
+  void capabilitiesReplyFinished();
+
 private:
-    QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
+  QByteArray spECPResponse;
+  QByteArray idpECPResponse;
+  QNetworkReply* mSPReply;
+  QNetworkReply* mIdPReply;
 
-    void putMethodConfig( const QString &authcfg, const QgsAuthMethodConfig& mconfig );
+  QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
 
-    void removeMethodConfig( const QString &authcfg );
+  void putMethodConfig( const QString &authcfg, const QgsAuthMethodConfig& mconfig );
 
-    static QMap<QString, QgsAuthMethodConfig> mAuthConfigCache;
+  void removeMethodConfig( const QString &authcfg );
+
+  static QMap<QString, QgsAuthMethodConfig> mAuthConfigCache;
 };
 
 #endif // QGSAUTHSAML2METHOD_H

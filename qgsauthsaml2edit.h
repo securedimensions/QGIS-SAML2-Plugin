@@ -10,31 +10,40 @@
 
 class QgsAuthSAML2Edit : public QgsAuthMethodEdit, private Ui::QgsAuthSAML2Edit
 {
-    Q_OBJECT
+  Q_OBJECT
 
-  public:
-    explicit QgsAuthSAML2Edit( QWidget *parent = nullptr );
-    virtual ~QgsAuthSAML2Edit();
+public:
+  explicit QgsAuthSAML2Edit( QWidget *parent = nullptr );
+  virtual ~QgsAuthSAML2Edit();
 
-    bool validateConfig() override;
+  bool validateConfig() override;
 
-    QgsStringMap configMap() const override;
+  QgsStringMap configMap() const override;
 
-  public slots:
-    void loadConfig( const QgsStringMap &configmap ) override;
+public slots:
+  void loadConfig( const QgsStringMap &configmap ) override;
 
-    void resetConfig() override;
+  void resetConfig() override;
 
-    void clearConfig() override;
+  void clearConfig() override;
 
-  private slots:
-    void on_leUsername_textChanged( const QString& txt );
+private slots:
+  void on_leUsername_textChanged( const QString& txt );
 
-    void on_chkPasswordShow_stateChanged( int state );
+  void on_chkPasswordShow_stateChanged( int state );
 
-  private:
-    QgsStringMap mConfigMap;
-    bool mValid;
+  void onFedUrlChanged( const QString& url );
+
+  void loadFederationMetadata();
+
+  void parseFederationMetadata();
+
+
+
+private:
+  QgsStringMap mConfigMap;
+  bool mValid;
+  void setupConnections();
 };
 
 #endif // QGSAUTHSAML2EDIT_H
