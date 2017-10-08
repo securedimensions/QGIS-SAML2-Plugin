@@ -93,10 +93,15 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
 
   connect( mSPReply, SIGNAL( finished() ), this, SLOT( spReplyFinished() ) );
 
+  mContentType = QString("");
   while ( mSPReply )
   {
     QCoreApplication::processEvents( QEventLoop::ExcludeUserInputEvents );
   }
+
+  qWarning() << "Content-Type: " << mContentType;
+  if (mContentType != QString("application/vnd.paos+xml"))
+	  return true;
 
   if ( spECPResponse.isEmpty() )
   {
@@ -155,6 +160,7 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     {
       requestToIdP.setRawHeader( "Authorization", "Basic " + QString( "%1:%2" ).arg( username, password ).toAscii().toBase64() );
     }
+
     requestToIdP.setAttribute( QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferNetwork );
     requestToIdP.setAttribute( QNetworkRequest::CacheSaveControlAttribute, false );
 
@@ -235,6 +241,8 @@ void QgsAuthSAML2Method::spReplyFinished()
     QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
     spECPResponse.clear();
   }
+
+  mContentType = (QString) mSPReply->rawHeader("Content-Type");
 
   mSPReply->deleteLater();
   mSPReply = 0;

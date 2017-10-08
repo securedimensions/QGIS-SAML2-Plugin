@@ -41,6 +41,8 @@ private:
   QByteArray idpECPResponse;
   QNetworkReply* mSPReply;
   QNetworkReply* mIdPReply;
+  QString mContentType;
+  
 
   QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
 
