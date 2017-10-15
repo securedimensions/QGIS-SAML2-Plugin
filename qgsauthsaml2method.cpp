@@ -8,6 +8,9 @@
 #include <QDomDocument>
 #include <QNetworkRequest>
 #include <QNetworkReply>
+#include <QBuffer>
+#include <QNetworkCookie>
+#include <QDomNamedNodeMap>
 
 static const QString AUTH_METHOD_KEY = "SAML2";
 static const QString AUTH_METHOD_DESCRIPTION = "SAML2 authentication";
@@ -29,6 +32,52 @@ namespace
     }
     return QDomNode();
   }
+
+  QString getECPEndpoint(const QString& url)
+  {
+    QString ecp/*="https://idp.tb13.secure-dimensions.de/idp/profile/SAML2/SOAP/ECP"*/;
+    const QString BINDINGURI="urn:oasis:names:tc:SAML:2.0:bindings:SOAP";
+    const QString TAGNAME="SingleSignOnService";
+    QEventLoop networkLoop;
+    QNetworkReply* idpReply = QgsNetworkAccessManager::instance()->get( QNetworkRequest( url ) );
+    QObject::connect( idpReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
+    networkLoop.exec();
+    QDomDocument idpMetadata;
+    QByteArray response;
+    if ( idpReply->error() == QNetworkReply::NoError )
+    {
+      response = idpReply->readAll();
+      if ( response.isEmpty() )
+      {
+        QString errorMsg = QStringLiteral( "Update request FAILED: empty metadata response from IdP: %1" ).arg( idpReply->errorString() );
+        QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+        return false;
+      }
+    }
+    else
+    {
+      QString errorMsg = QStringLiteral( "Update request FAILED: metadata request to IdP failed: %1" ).arg( idpReply->errorString() );
+      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+      return false;
+    }
+    
+    idpMetadata.setContent( response, true );
+    QDomNodeList ssoNodes = idpMetadata.elementsByTagName( TAGNAME );
+    for( int i = 0; i < ssoNodes.count(); ++i )
+    {
+      QDomNamedNodeMap attrs= ssoNodes.at(i).attributes();
+      if ( attrs.contains( "Binding" ) )
+      {
+        if( attrs.namedItem( "Binding" ).nodeValue() == BINDINGURI )
+        {
+          ecp = attrs.namedItem( "Location" ).nodeValue();
+          break;
+        }
+      }
+    }
+    return ecp;
+  }
+
 }
 
 
@@ -68,7 +117,12 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
 {
   Q_UNUSED( dataprovider )
 
-    QString errorMsg;
+  QString errorMsg;
+  QEventLoop networkLoop;
+  QByteArray spECPResponse;
+  QByteArray idpECPResponse;
+  QgsNetworkAccessManager* nam = QgsNetworkAccessManager::instance();
+  QList<QNetworkCookie> cookies;
 
   QgsAuthMethodConfig mconfig = getMethodConfig( authcfg );
   if ( !mconfig.isValid() )
@@ -88,24 +142,26 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
   request.setRawHeader("PAOS", "ver=\"urn:liberty:paos:2003-08\";\"urn:oasis:names:tc:SAML:2.0:profiles:SSO:ecp\"");
   request.setRawHeader("Accept", "text/xml; application/vnd.paos+xml");
 
+  /* Wait until reply is finished */
   /* this now contains the ecp response from the SP and not the capabilities*/
-  mSPReply = QgsNetworkAccessManager::instance()->get( request );
-
-  connect( mSPReply, SIGNAL( finished() ), this, SLOT( spReplyFinished() ) );
-
-  mContentType = QString("");
-  while ( mSPReply )
+  QNetworkReply* mSPReply = nam->get( request );
+  connect( mSPReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
+  networkLoop.exec();
+  
+  if ( mSPReply->error() == QNetworkReply::NoError )
   {
-    QCoreApplication::processEvents( QEventLoop::ExcludeUserInputEvents );
+    spECPResponse = mSPReply->readAll();
+
+    if ( spECPResponse.isEmpty() )
+    {
+      QString errorMsg = QStringLiteral( "Update request FAILED: empty ECP response from SP: %1" ).arg( mSPReply->errorString() );
+      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+      return false;
+    }
   }
-
-  qWarning() << "Content-Type: " << mContentType;
-  if (mContentType != QString("application/vnd.paos+xml"))
-	  return true;
-
-  if ( spECPResponse.isEmpty() )
+  else
   {
-    errorMsg = QStringLiteral( "Update request FAILED for authcfg %1: empty ECP Response" ).arg( authcfg );
+    QString errorMsg = QStringLiteral( "Update request FAILED: ECP Response from SP failed: %1" ).arg( mSPReply->errorString() );
     QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
     return false;
   }
@@ -150,7 +206,7 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     dataToIdP.remove(ix1, ix2-ix1);
     dataToIdP.insert(ix1-1,'/');
 
-    QNetworkRequest requestToIdP( QUrl("https://idp.tb13.secure-dimensions.de/idp/profile/SAML2/SOAP/ECP")/*mconfig.config( "providerurl" )*/ );
+    QNetworkRequest requestToIdP( QUrl( getECPEndpoint( mconfig.config( "providerurl" ) ) ) );
     // in case the user has saved username/password in the configuration, it must
     // be applied to the IdP not the SP
     QString username = mconfig.config( "username" );
@@ -168,19 +224,25 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     requestToIdP.setHeader(QNetworkRequest::ContentTypeHeader, "text/xml");
     // relay the modified ECP message to IdP
     QgsDebugMsg( QString( "ECP message to IdP: %1" ).arg( QString(dataToIdP)) );
-    mIdPReply = QgsNetworkAccessManager::instance()->post( requestToIdP , dataToIdP);
-
-    connect( mIdPReply, SIGNAL( finished() ), this, SLOT( idpReplyFinished() ) );
-
-    while ( mIdPReply )
+    /* Wait until reply is finished */    
+    QNetworkReply* mIdPReply = nam->post( requestToIdP , dataToIdP);
+    connect( mIdPReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
+    networkLoop.exec();
+    // we have a response from the IdP
+    if ( mIdPReply->error() == QNetworkReply::NoError )
     {
-      QCoreApplication::processEvents( QEventLoop::ExcludeUserInputEvents );
+      idpECPResponse = mIdPReply->readAll();
+
+      if ( idpECPResponse.isEmpty() )
+      {
+        QString errorMsg = QStringLiteral( "Update request FAILED: empty ECP response from IdP: %1" ).arg( mIdPReply->errorString() );
+        QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+        return false;
+      }
     }
-
-    // we have a response from the IdP 
-    if ( idpECPResponse.isEmpty() )
+    else
     {
-      errorMsg = QStringLiteral( "Update request config FAILED for authcfg: %1: empty ECP response from IdP" ).arg( authcfg );
+      QString errorMsg = QStringLiteral( "Update request FAILED: ECP Response from IdP failed: %1" ).arg( mIdPReply->errorString() );
       QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
       return false;
     }
@@ -209,109 +271,30 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     QgsDebugMsg( QString( "requesting capabilities via ECP with URL: %1" ).arg( acsURL ) );
     requestToSP.setHeader(QNetworkRequest::ContentTypeHeader, "text/xml; application/vnd.paos+xml");
 
-    /* continue to load the capabilities */
-    QgsMessageLog::logMessage( idpECPResponse, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-    QNetworkReply* capabilitiesReply = QgsNetworkAccessManager::instance()->post( requestToSP , idpECPResponse);
-    connect( capabilitiesReply, SIGNAL( finished() ), this, SLOT( capabilitiesReplyFinished() ) );
-    while ( capabilitiesReply )
+    /* Send request for cookies */  
+    QNetworkReply* capabilitiesReply = nam->post( requestToSP, idpECPResponse );
+    connect( capabilitiesReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
+    networkLoop.exec();
+    QVariant cookieData;
+    if ( capabilitiesReply->error() == QNetworkReply::NoError )
     {
-      QCoreApplication::processEvents( QEventLoop::ExcludeUserInputEvents );
+      cookieData = capabilitiesReply->header( QNetworkRequest::SetCookieHeader );
+      if ( !cookieData.isValid() )
+      {
+        QString errorMsg = QStringLiteral( "Update request FAILED: no cookies from SP: %1" ).arg( capabilitiesReply->errorString() );
+        QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+        return false;
+      }
+      return true;
+    }
+    else
+    {
+      QString errorMsg = QStringLiteral( "Update request FAILED: ECP Response from SP failed: %1" ).arg( capabilitiesReply->errorString() );
+      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
+      return false;
     }
   }
-
   return true;
-}
-
-void QgsAuthSAML2Method::spReplyFinished()
-{
-  // this is for fetching the PAOS message from the SP
-  if ( mSPReply->error() == QNetworkReply::NoError )
-  {
-    spECPResponse = mSPReply->readAll();
-
-    if ( spECPResponse.isEmpty() )
-    {
-      QString errorMsg = QStringLiteral( "Update request config FAILED: empty ECP response from SP: %1" ).arg( mSPReply->errorString() );
-      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-    }
-  }
-  else
-  {
-    QString errorMsg = QStringLiteral( "Update request config FAILED: ECP Response from SP failed: %1" ).arg( mSPReply->errorString() );
-    QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-    spECPResponse.clear();
-  }
-
-  mContentType = (QString) mSPReply->rawHeader("Content-Type");
-
-  mSPReply->deleteLater();
-  mSPReply = 0;
-}
-
-void QgsAuthSAML2Method::idpReplyFinished()
-{
-  // this is for fetching the PAOS message from the SP
-  if ( mIdPReply->error() == QNetworkReply::NoError )
-  {
-    idpECPResponse = mIdPReply->readAll();
-
-    if ( idpECPResponse.isEmpty() )
-    {
-      QString errorMsg = QStringLiteral( "Update request config FAILED: empty ECP response from IdP: %1" ).arg( mIdPReply->errorString() );
-      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-    }
-  }
-  else
-  {
-    QString errorMsg = QStringLiteral( "Update request config FAILED: ECP Response from IdP failed: %1" ).arg( mIdPReply->errorString() );
-    QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-    idpECPResponse.clear();
-  }
-
-  mIdPReply->deleteLater();
-  mIdPReply = 0;
-}
-
-void QgsAuthSAML2Method::capabilitiesReplyFinished()
-{
-  QNetworkReply *mCapabilitiesReply = qobject_cast<QNetworkReply *>(sender());
-  if ( mCapabilitiesReply->error() == QNetworkReply::NoError )
-  {
-    QVariant redirect = mCapabilitiesReply->attribute( QNetworkRequest::RedirectionTargetAttribute );
-    if ( !redirect.isNull() )
-    {
-
-      QNetworkRequest request( redirect.toUrl() );
-      request.setAttribute( QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferNetwork );
-      request.setAttribute( QNetworkRequest::CacheSaveControlAttribute, true );
-
-      mCapabilitiesReply->deleteLater();
-      QgsDebugMsg( QString( "redirected getcapabilities: %1" ).arg( redirect.toString() ) );
-      mCapabilitiesReply = QgsNetworkAccessManager::instance()->get( request );
-
-      connect( mCapabilitiesReply, SIGNAL( finished() ), this, SLOT( capabilitiesReplyFinished() ) );
-      connect( mCapabilitiesReply, SIGNAL( downloadProgress( qint64, qint64 ) ), this, SLOT( capabilitiesReplyProgress( qint64, qint64 ) ) );
-      return;
-    }
-
-    //if ( httpcapabilitiesresponse.isEmpty() )
-    //{
-    //  mErrorFormat = "text/plain";
-    //  mError = tr( "empty of capabilities: %1" ).arg( mCapabilitiesReply->errorString() );
-    //}
-  }
-  else
-  {
-    //mErrorFormat = "text/plain";
-    //mError = tr( "Download of capabilities failed: %1" ).arg( mCapabilitiesReply->errorString() );
-    //QgsDebugMsg( "error: " + mError );
-    //httpcapabilitiesresponse.clear();
-    qDebug()<<mCapabilitiesReply->errorString();
-  }
-
-
-  mCapabilitiesReply->deleteLater();
-  mCapabilitiesReply = 0;
 }
 
 bool QgsAuthSAML2Method::updateDataSourceUriItems( QStringList &connectionItems, const QString &authcfg,
@@ -331,7 +314,6 @@ bool QgsAuthSAML2Method::updateNetworkReply( QNetworkReply *reply, const QString
   return true;
 }
 
-//JSV todo
 void QgsAuthSAML2Method::updateMethodConfig( QgsAuthMethodConfig &mconfig )
 {
   if ( mconfig.hasConfig( "oldconfigstyle" ) )

@@ -31,18 +31,8 @@ public:
 
   void updateMethodConfig( QgsAuthMethodConfig &mconfig ) override;
 
-private slots:
-  void spReplyFinished();
-  void idpReplyFinished();
-  void capabilitiesReplyFinished();
 
 private:
-  QByteArray spECPResponse;
-  QByteArray idpECPResponse;
-  QNetworkReply* mSPReply;
-  QNetworkReply* mIdPReply;
-  QString mContentType;
-  
 
   QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
 
