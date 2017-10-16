@@ -26,6 +26,7 @@
 #include <QBuffer>
 #include <QNetworkCookie>
 #include <QDomNamedNodeMap>
+#include <QSettings>
 
 static const QString AUTH_METHOD_KEY = "SAML2";
 static const QString AUTH_METHOD_DESCRIPTION = "SAML2 authentication";
@@ -106,10 +107,26 @@ QgsAuthSAML2Method::QgsAuthSAML2Method()
     << "wfs"  // convert to lowercase
     << "wcs"
     << "wms" );
+  QSettings cookieSetting( "Secure Dimensions", "QGIS" );
+  QVariant tempCookie = cookieSetting.value( "saml2/cookie" );
+  if( !tempCookie.isNull() )
+  {
+    QList<QNetworkCookie> cookies = tempCookie.value<QList<QNetworkCookie>>();
+    for ( int i=0; i < cookies.size(); ++i )
+    {
+
+    }
+  }
 }
 
 QgsAuthSAML2Method::~QgsAuthSAML2Method()
 {
+  QSettings cookieSetting( "Secure Dimensions", "QGIS" );
+  if( mCookieData.isValid() )
+  {
+    cookieSetting.setValue( "saml2/cookie", mCookieData );
+    cookieSetting.sync();
+  }
 }
 
 QString QgsAuthSAML2Method::key() const
@@ -137,7 +154,12 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
   QByteArray spECPResponse;
   QByteArray idpECPResponse;
   QgsNetworkAccessManager* nam = QgsNetworkAccessManager::instance();
-  QList<QNetworkCookie> cookies;
+
+  if( mCookieData.isValid() )
+  {
+    request.setHeader( QNetworkRequest::CookieHeader, mCookieData );
+    return true;
+  }
 
   QgsAuthMethodConfig mconfig = getMethodConfig( authcfg );
   if ( !mconfig.isValid() )
@@ -290,11 +312,10 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     QNetworkReply* capabilitiesReply = nam->post( requestToSP, idpECPResponse );
     connect( capabilitiesReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
     networkLoop.exec();
-    QVariant cookieData;
     if ( capabilitiesReply->error() == QNetworkReply::NoError )
     {
-      cookieData = capabilitiesReply->header( QNetworkRequest::SetCookieHeader );
-      if ( !cookieData.isValid() )
+      mCookieData = capabilitiesReply->header( QNetworkRequest::SetCookieHeader );
+      if ( !mCookieData.isValid() )
       {
         QString errorMsg = QStringLiteral( "Update request FAILED: no cookies from SP: %1" ).arg( capabilitiesReply->errorString() );
         QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );

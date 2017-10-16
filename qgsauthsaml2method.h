@@ -48,6 +48,7 @@ public:
 
 
 private:
+  QVariant mCookieData;
 
   QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
 
