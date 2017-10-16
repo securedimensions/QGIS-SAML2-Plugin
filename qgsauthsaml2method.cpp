@@ -107,26 +107,10 @@ QgsAuthSAML2Method::QgsAuthSAML2Method()
     << "wfs"  // convert to lowercase
     << "wcs"
     << "wms" );
-  QSettings cookieSetting( "Secure Dimensions", "QGIS" );
-  QVariant tempCookie = cookieSetting.value( "saml2/cookie" );
-  if( !tempCookie.isNull() )
-  {
-    QList<QNetworkCookie> cookies = tempCookie.value<QList<QNetworkCookie>>();
-    for ( int i=0; i < cookies.size(); ++i )
-    {
-
-    }
-  }
 }
 
 QgsAuthSAML2Method::~QgsAuthSAML2Method()
 {
-  QSettings cookieSetting( "Secure Dimensions", "QGIS" );
-  if( mCookieData.isValid() )
-  {
-    cookieSetting.setValue( "saml2/cookie", mCookieData );
-    cookieSetting.sync();
-  }
 }
 
 QString QgsAuthSAML2Method::key() const
