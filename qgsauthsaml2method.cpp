@@ -48,52 +48,6 @@ namespace
     }
     return QDomNode();
   }
-
-  QString getECPEndpoint(const QString& url)
-  {
-    QString ecp/*="https://idp.tb13.secure-dimensions.de/idp/profile/SAML2/SOAP/ECP"*/;
-    const QString BINDINGURI="urn:oasis:names:tc:SAML:2.0:bindings:SOAP";
-    const QString TAGNAME="SingleSignOnService";
-    QEventLoop networkLoop;
-    QNetworkReply* idpReply = QgsNetworkAccessManager::instance()->get( QNetworkRequest( url ) );
-    QObject::connect( idpReply, SIGNAL( finished() ), &networkLoop, SLOT( quit() ) );
-    networkLoop.exec();
-    QDomDocument idpMetadata;
-    QByteArray response;
-    if ( idpReply->error() == QNetworkReply::NoError )
-    {
-      response = idpReply->readAll();
-      if ( response.isEmpty() )
-      {
-        QString errorMsg = QStringLiteral( "Update request FAILED: empty metadata response from IdP: %1" ).arg( idpReply->errorString() );
-        QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-        return false;
-      }
-    }
-    else
-    {
-      QString errorMsg = QStringLiteral( "Update request FAILED: metadata request to IdP failed: %1" ).arg( idpReply->errorString() );
-      QgsMessageLog::logMessage( errorMsg, AUTH_METHOD_KEY, QgsMessageLog::CRITICAL );
-      return false;
-    }
-    
-    idpMetadata.setContent( response, true );
-    QDomNodeList ssoNodes = idpMetadata.elementsByTagName( TAGNAME );
-    for( int i = 0; i < ssoNodes.count(); ++i )
-    {
-      QDomNamedNodeMap attrs= ssoNodes.at(i).attributes();
-      if ( attrs.contains( "Binding" ) )
-      {
-        if( attrs.namedItem( "Binding" ).nodeValue() == BINDINGURI )
-        {
-          ecp = attrs.namedItem( "Location" ).nodeValue();
-          break;
-        }
-      }
-    }
-    return ecp;
-  }
-
 }
 
 
@@ -231,7 +185,7 @@ bool QgsAuthSAML2Method::updateNetworkRequest( QNetworkRequest &request, const Q
     dataToIdP.remove(ix1, ix2-ix1);
     dataToIdP.insert(ix1-1,'/');
 
-    QNetworkRequest requestToIdP( QUrl( getECPEndpoint( mconfig.config( "providerurl" ) ) ) );
+    QNetworkRequest requestToIdP( QUrl( mconfig.config( "providerurl" ) ) );
     // in case the user has saved username/password in the configuration, it must
     // be applied to the IdP not the SP
     QString username = mconfig.config( "username" );
@@ -350,7 +304,8 @@ void QgsAuthSAML2Method::updateMethodConfig( QgsAuthMethodConfig &mconfig )
     mconfig.setConfig( "username", conflist.at( 1 ) );
     mconfig.setConfig( "password", conflist.at( 2 ) );
     mconfig.setConfig( "federationurl", conflist.at( 3 ) );
-    mconfig.setConfig( "providerurl", conflist.at( 4 ) );
+    mconfig.setConfig( "providername", conflist.at( 4 ) );
+    mconfig.setConfig( "providerurl", conflist.at( 5 ) );
     mconfig.removeConfig( "oldconfigstyle" );
   }
 

@@ -1,16 +1,16 @@
 /***************************************************************************
-    begin                : October 15, 2017
-    copyright            : (C) 2017 by Secure Dimensions GmbH, Germany
-    author               : Andreas Matheus, Secure Dimensions GmbH
-    email                : am at secure-dimensions dot de
- ***************************************************************************
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- ***************************************************************************/
+begin                : October 15, 2017
+copyright            : (C) 2017 by Secure Dimensions GmbH, Germany
+author               : Andreas Matheus, Secure Dimensions GmbH
+email                : am at secure-dimensions dot de
+***************************************************************************
+*                                                                         *
+*   This program is free software; you can redistribute it and/or modify  *
+*   it under the terms of the GNU General Public License as published by  *
+*   the Free Software Foundation; either version 2 of the License, or     *
+*   (at your option) any later version.                                   *
+*                                                                         *
+***************************************************************************/
 
 
 #include <QStandardItemModel>
@@ -40,7 +40,7 @@ QgsAuthSAML2Edit::~QgsAuthSAML2Edit()
 bool QgsAuthSAML2Edit::validateConfig()
 {
   bool curvalid = !leUsername->text().isEmpty() && !lePassword->text().isEmpty()
-    && !leFedUrl->text().isEmpty() && cbProviders->currentIndex() != -1; //JSV todo check combobox index
+    && !leFedUrl->text().isEmpty() && cbProviders->currentIndex() != -1;
   if ( mValid != curvalid )
   {
     mValid = curvalid;
@@ -55,7 +55,8 @@ QgsStringMap QgsAuthSAML2Edit::configMap() const
   config.insert( "username", leUsername->text() );
   config.insert( "password", lePassword->text() );
   config.insert( "federationurl", leFedUrl->text() );
-  config.insert( "providerurl", cbProviders->currentText() );
+  config.insert( "providername", cbProviders->currentText() );
+  config.insert( "providerurl", cbProviders->itemData( cbProviders->currentIndex() ).toString() );
 
   return config;
 }
@@ -69,7 +70,7 @@ void QgsAuthSAML2Edit::loadConfig( const QgsStringMap &configmap )
   lePassword->setText( configmap.value( "password" ) );
   leFedUrl->setText( configmap.value( "federationurl" ) );
   cbProviders->clear();
-  cbProviders->addItem( configmap.value( "providerurl" ) );
+  cbProviders->addItem( configmap.value( "providername" ), configmap.value( "providerurl" ) );
 
   validateConfig();
 }
@@ -136,78 +137,83 @@ void QgsAuthSAML2Edit::parseFederationMetadata()
 
   QString entityID = QString();
   bool entityIsIdP = false;
-  QString orgName = QString();
+  QString displayName = QString();
   QString ecpURL = QString();
 
   /* We'll parse the XML until we reach end of it.*/
-  while(!xml.atEnd() &&
-    !xml.hasError()) {
-      /* Read next element.*/
-      QXmlStreamReader::TokenType token = xml.readNext();
-      /* If token is just StartDocument, we'll go to next.*/
-      if(token == QXmlStreamReader::StartDocument) {
+  while(!xml.atEnd() &&!xml.hasError())
+  {
+    /* Read next element.*/
+    QXmlStreamReader::TokenType token = xml.readNext();
+    /* If token is just StartDocument, we'll go to next.*/
+    if(token == QXmlStreamReader::StartDocument)
+    {
+      continue;
+    }
+    /* If token is StartElement, we'll see if we can read it.*/
+    if(token == QXmlStreamReader::StartElement)
+    {
+      if(xml.name() == "EntitiesDescriptor")
+      {
         continue;
       }
-      /* If token is StartElement, we'll see if we can read it.*/
-      if(token == QXmlStreamReader::StartElement) {
-        if(xml.name() == "EntitiesDescriptor") {
-          continue;
-        }
-        if(xml.name() == "EntityDescriptor")
-        {
-          entityIsIdP = false;
-          entityID = QString();
-          orgName = QString();
-          ecpURL = QString();
+      if(xml.name() == "EntityDescriptor")
+      {
+        entityIsIdP = false;
+        entityID = QString();
+        displayName = QString();
+        ecpURL = QString();
 
-          QXmlStreamAttributes attrs = xml.attributes();
-          entityID = QString(attrs.value("entityID").toString().constData());
-          continue;
-        }
-        else if(xml.name() == "IDPSSODescriptor")
-        {
-          entityIsIdP = true;
-          continue;
-        }
-        else if(xml.name() == "SingleSignOnService")
-        {
-          QXmlStreamAttributes attrs = xml.attributes();
-          if (entityIsIdP && attrs.value("Binding") == QString("urn:oasis:names:tc:SAML:2.0:bindings:SOAP"))
-          {
-            ecpURL = QString(attrs.value("Location").toString().constData());
-          }
-          continue;
-        }
-        else if(xml.name() == "OrganizationName")
-        {
-          if (entityIsIdP)
-            orgName = QString(xml.readElementText().constData());
-
-          continue;
-        }
-
+        QXmlStreamAttributes attrs = xml.attributes();
+        entityID = QString(attrs.value("entityID").toString().constData());
+        continue;
       }
-      if(token == QXmlStreamReader::EndElement) {
-        if(xml.name() == "EntityDescriptor")
-        {
-          if(entityIsIdP && !ecpURL.isEmpty())
-          {
-            if (orgName.isEmpty())
-              orgName = entityID;
-
-            cbProviders->addItem(orgName,QVariant(ecpURL));
-
-            QgsDebugMsg(QString("IdP entityID: %1").arg(entityID.toStdString().c_str()));
-            QgsDebugMsg(QString("ECPURL: %1\n").arg( ecpURL.toStdString().c_str()));
-            QgsDebugMsg(QString("OrgName: %1\n").arg( orgName.toStdString().c_str()));
-          }
-          continue;
-        }
+      else if(xml.name() == "IDPSSODescriptor")
+      {
+        entityIsIdP = true;
+        continue;
       }
+      else if(xml.name() == "SingleSignOnService")
+      {
+        QXmlStreamAttributes attrs = xml.attributes();
+        if (entityIsIdP && attrs.value("Binding") == QString("urn:oasis:names:tc:SAML:2.0:bindings:SOAP"))
+        {
+          ecpURL = QString(attrs.value("Location").toString().constData());
+        }
+        continue;
+      }
+      else if(xml.name() == "DisplayName")
+      {
+        if (entityIsIdP)
+          displayName = QString(xml.readElementText().constData());
+
+        continue;
+      }
+
+    }
+    if(token == QXmlStreamReader::EndElement) 
+    {
+      if(xml.name() == "EntityDescriptor")
+      {
+        if(entityIsIdP && !ecpURL.isEmpty())
+        {
+          if (displayName.isEmpty())
+            displayName = entityID;
+
+          cbProviders->addItem(displayName,QVariant(ecpURL));
+
+          QgsDebugMsg(QString("IdP entityID: %1").arg(entityID.toStdString().c_str()));
+          QgsDebugMsg(QString("ECPURL: %1\n").arg( ecpURL.toStdString().c_str()));
+          QgsDebugMsg(QString("Display Name: %1\n").arg( displayName.toStdString().c_str()));
+        }
+        continue;
+      }
+    }
 
   }
   /* Error handling. */
-  if(xml.hasError()) {
+  if(xml.hasError()) 
+  {
     QMessageBox::critical(this, 
       "error loading Federation Metadata", 
       xml.errorString(), 
