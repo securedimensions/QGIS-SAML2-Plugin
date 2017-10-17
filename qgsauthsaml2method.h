@@ -48,7 +48,7 @@ public:
 
 
 private:
-  QVariant mCookieData;
+  QMap<QString, QVariant> mCookieCache;
 
   QgsAuthMethodConfig getMethodConfig( const QString &authcfg, bool fullconfig = true );
 
