@@ -155,10 +155,10 @@ ENDIF()
 
 IF("${QGIS_VERSION}" VERSION_LESS "2.99.0")
   SET(QGIS2 TRUE)
-  MESSAGE(STATUS "QGIS target version for OAuth2 plugin set to 2.x")
+  MESSAGE(STATUS "QGIS target version for SAML2 plugin set to 2.x")
 ELSE()
   SET(QGIS2 FALSE)
-  MESSAGE(STATUS "QGIS target version for OAuth2 plugin set to 3.x")
+  MESSAGE(STATUS "QGIS target version for SAML2 plugin set to 3.x")
 ENDIF()
 
 IF(NOT QCA_FOUND)
